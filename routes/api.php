@@ -2,6 +2,8 @@
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\BookingController;
+use App\Http\Controllers\EventController;
 
 /*
 |--------------------------------------------------------------------------
@@ -14,6 +16,7 @@ use Illuminate\Support\Facades\Route;
 |
 */
 
-Route::middleware('auth:api')->get('/user', function (Request $request) {
-    return $request->user();
-});
+Route::get('/events', [EventController::class, 'index']);
+Route::post('/event/booking', [EventController::class, 'postBooking']);
+Route::get('/event/{id}/booking', [EventController::class, 'getBookings']);
+Route::get('/event/bookings', [BookingController::class, 'index']); 
