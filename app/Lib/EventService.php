@@ -63,74 +63,95 @@ class EventService {
             return $this->reCacheAllEvents();
         }
 
-        $events = collect(Cache::get($this->event_cache_key));
-        $event = $events->where('id', data_get($request, 'event_id'))->first();
-        $eventTimings = data_get($event, 'timings');
-        $soldSlots = data_get($event, 'soldSlots');
-        
         $bookingdatetime = new Carbon(data_get($request, 'booking_time'));
-
-        $isSlotFull = in_array($bookingdatetime->format("Y-m-d H:i"), $soldSlots->toArray());
-        $beyondAdvanceBookingPeriod = Carbon::now()->addDay($event->bookable_in_advance_days)->lessThan($bookingdatetime);
-
-        $NotInWindow = 0;
-        
         $bookingDate = $bookingdatetime->format('Y-m-d');
         $bookingDay = strtolower($bookingdatetime->format('D'));
 
-        foreach ($eventTimings as $window) {
-            $windowFrom = new Carbon("$bookingDate {$window->from}");
-            $windowUntil = new Carbon("$bookingDate {$window->until}");
-            $withinTimeWindow = $bookingdatetime->greaterThanOrEqualTo($windowFrom) && $bookingdatetime->lessThan($windowUntil);
-            $inWindowDays = str_contains($window->days, $bookingDay);
+        $bookingTimeInPast = $bookingdatetime->lessThan(Carbon::now());
 
-            $isAllowed = (boolean) $window->availability == ($withinTimeWindow && $inWindowDays);
-
-            if (!$isAllowed) {
-                $NotInWindow = 1;
-                break;
-            }
+        if ($bookingTimeInPast) {
+            throw new Exception ("Past booking not allowed", 2);
         }
 
-        if (    $isSlotFull
-                || $beyondAdvanceBookingPeriod
-                || $NotInWindow) {
+        // Get Events from Cache
+        $events = collect(Cache::get($this->event_cache_key));
+        $event = $events->where('id', data_get($request, 'event_id'))->first();
+
+        $beyondAdvanceBookingPeriod = Carbon::now()->addDay($event->bookable_in_advance_days)->lessThan($bookingdatetime);        
+
+        if ($beyondAdvanceBookingPeriod) {
             throw new Exception ("Booking not allowed for this time slot", 2);
         }
+
+        $soldSlots = data_get($event, 'soldSlots');
+
+        $isSlotFull = in_array($bookingdatetime->format("Y-m-d H:i"), $soldSlots->toArray());
+
+        if ($isSlotFull) {
+            throw new Exception ("Booking not allowed for this time slot", 2);
+        }
+
+        $eventTimingsOfTheDay = collect(data_get($event, 'timings'))
+        // filter only those event timing records which have matching day
+        ->filter(function ($window) use($bookingDay) {
+            return str_contains($window->days, $bookingDay);
+        });
+
+        // filter only those event timing records which have matching time window
+        $eventTimings = $eventTimingsOfTheDay->filter(function ($window) use($bookingDate, $bookingdatetime) {
+            $windowFrom = new Carbon("$bookingDate {$window->from}");
+            $windowUntil = new Carbon("$bookingDate {$window->until}");
+            $withinTimeWindow = $bookingdatetime->between($windowFrom, $windowUntil);
+
+            return (boolean) $withinTimeWindow;
+        });
+
+        if (    
+            $eventTimings->where('availability', '=', 0)->count() > 0
+            || $eventTimings->where('availability', '=', 1)->count() == 0
+        ) {
+            throw new Exception ("Booking not allowed for this time slot", 2);
+        }
+        
+        return true;
     }
 
     function validateBookingRequest ($request) {
         $event = Event::find(data_get($request, 'event_id'));
-        $eventTimings = EventTiming::where('event_id', data_get($request, 'event_id'))->get();
+
+        $bookingdatetime = new Carbon(data_get($request, 'booking_time'));
+        $bookingDate = $bookingdatetime->format('Y-m-d');
+        $bookingDay = strtolower($bookingdatetime->format('D'));
+        $eventTimings = EventTiming::where('event_id', data_get($request, 'event_id'))
+            // filter only those event timing records which have matching day
+            ->where('days', 'like', "%$bookingDay%")
+            ->get()
+            // filter only those event timing records which have matching time window
+            ->filter(function ($window) use($bookingDate, $bookingdatetime) {
+                $windowFrom = new Carbon("$bookingDate {$window->from}");
+                $windowUntil = new Carbon("$bookingDate {$window->until}");
+                $withinTimeWindow = $bookingdatetime->between($windowFrom, $windowUntil);
+    
+                return (boolean) $withinTimeWindow;
+            });
 
         $booking = Booking::leftJoin('events', 'events.id', '=', 'bookings.event_id')
             ->where('bookings.booking_time', '=', data_get($request, 'booking_time'))
             ->where('events.id', '=', data_get($request, 'event_id'))
             ->groupBy('bookings.booking_time', 'events.participants_per_slot')
             ->select(DB::raw('(count(bookings.id) >= events.participants_per_slot) as isSlotFull'))->first();
-        
-        $bookingdatetime = new Carbon(data_get($request, 'booking_time'));
+    
 
         $isSlotFull = $booking ? $booking->isSlotFull : 0;
         $beyondAdvanceBookingPeriod = Carbon::now()->addDay($event->bookable_in_advance_days)->lessThan($bookingdatetime);
 
         $NotInWindow = 0;
-        
-        $bookingDate = $bookingdatetime->format('Y-m-d');
-        $bookingDay = strtolower($bookingdatetime->format('D'));
 
-        foreach ($eventTimings as $window) {
-            $windowFrom = new Carbon("$bookingDate {$window->from}");
-            $windowUntil = new Carbon("$bookingDate {$window->until}");
-            $withinTimeWindow = $bookingdatetime->greaterThanOrEqualTo($windowFrom) && $bookingdatetime->lessThan($windowUntil);
-            $inWindowDays = str_contains($window->days, $bookingDay);
-
-            $isAllowed = (boolean) $window->availability == ($withinTimeWindow && $inWindowDays);
-
-            if (!$isAllowed) {
-                $NotInWindow = 1;
-                break;
-            }
+        if (    
+            $eventTimings->where('availability', '=', 0)->count() > 0
+            || $eventTimings->where('availability', '=', 1)->count() == 0
+        ) {
+            $NotInWindow = 1;
         }
 
         if (    $isSlotFull

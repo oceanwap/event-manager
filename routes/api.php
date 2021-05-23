@@ -15,8 +15,10 @@ use App\Http\Controllers\EventController;
 | is assigned the "api" middleware group. Enjoy building your API!
 |
 */
-
 Route::get('/events', [EventController::class, 'index']);
-Route::post('/event/booking', [EventController::class, 'postBooking']);
-Route::get('/event/{id}/booking', [EventController::class, 'getBookings']);
-Route::get('/event/bookings', [BookingController::class, 'index']); 
+Route::get('bookings', [BookingController::class, 'index']); 
+
+Route::group([ 'prefix' => '/event'], function () {
+    Route::post('booking', [BookingController::class, 'postBooking']);
+    Route::get('{id}/bookings', [BookingController::class, 'getBookings']);
+});
