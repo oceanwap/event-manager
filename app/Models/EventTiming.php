@@ -8,8 +8,4 @@ use Illuminate\Database\Eloquent\Model;
 class EventTiming extends Model
 {
     use HasFactory;
-
-    protected $casts = [
-        // 'days' => 'array',
-    ];
 }
